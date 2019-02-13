@@ -1,3 +1,4 @@
+package io.github.kyle1elyk.tank_control;
 
 import com.google.gson.annotations.Expose;
 
