@@ -5,5 +5,11 @@
 	<classpathentry kind="lib" path="miglayout15-swing.jar" sourcepath="miglayout-src.zip"/>
 	<classpathentry kind="lib" path="jgoodies-forms-1.8.0.jar" sourcepath="jgoodies-forms-1.8.0-sources.jar"/>
 	<classpathentry kind="lib" path="libs/gson-2.8.5.jar"/>
+	<classpathentry kind="lib" path="libs/jinput-2.0.9.jar">
+		<attributes>
+			<attribute name="org.eclipse.jdt.launching.CLASSPATH_ATTR_LIBRARY_PATH_ENTRY" value="robot-client/libs/JInput_Natives"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="lib" path="libs/jna-5.2.0.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>

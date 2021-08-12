@@ -10,11 +10,16 @@ import java.awt.event.ActionListener;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.net.URL;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import javax.swing.AbstractAction;
 import javax.swing.GroupLayout;
 import javax.swing.GroupLayout.Alignment;
+import javax.swing.ImageIcon;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
@@ -28,11 +33,19 @@ import javax.swing.JSlider;
 import javax.swing.KeyStroke;
 import javax.swing.LayoutStyle.ComponentPlacement;
 import javax.swing.SwingConstants;
+import javax.swing.UIDefaults;
+import javax.swing.UIManager;
+import javax.swing.UnsupportedLookAndFeelException;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 
-import java.util.Timer;
-import java.util.TimerTask;
+import net.java.games.input.Controller;
+import net.java.games.input.ControllerEnvironment;
+import net.java.games.input.Component.Identifier;
+
+import javax.swing.JButton;
+import java.awt.FlowLayout;
+
 
 public class TankRemoteWindow{
 
@@ -40,18 +53,23 @@ public class TankRemoteWindow{
 	private static final double DECAY_RATE = 0.9;
 	private static final int DECAY_INTERVAL = 100;
 	private static final long DECAY_WAIT = 500;
+	private static final int GAMEPAD_INTERVAL = 100;
 	
 	private JFrame frame;
 	private JSlider slider_throttleLeft, slider_throttleRight;
 	private JLabel label_throttleLeft, label_throttleRight;
-	private boolean running = true, transmitting = true;
+	private JCheckBox chckbxTransmitting, checkBoxLeftBrake, checkBoxRightBrake;
+	private boolean running = true, transmitting = false;
 	private TankRemote tr;
 	private long lastInput;
+	private boolean firePressedBefore;
 	
 	private static String address = "localhost";
 	
 	private static int dir, power;
-	
+
+	private boolean controllerConnected = false;
+	private Controller gamepad;
 
 	/**
 	 * Launch the application.
@@ -85,16 +103,60 @@ public class TankRemoteWindow{
 		power = 0;
 		lastInput = System.currentTimeMillis();
 		initialize();
-		
+		controllerCheck();
 		Timer decayTimer = new Timer();
 		decayTimer.schedule(new TimerTask() {
 
 			@Override
 			public void run() {
-				decay();
+				if (!controllerConnected) {
+					decay();
+				}
 			}
 			
 		}, 0, DECAY_INTERVAL);
+		
+		firePressedBefore = false;
+		Timer controllerPollTimer = new Timer();
+		controllerPollTimer.schedule(new TimerTask() {
+
+			@Override
+			public void run() {
+				if (gamepad != null && controllerConnected) {
+					
+					gamepad.poll();
+					float ly = gamepad.getComponent(Identifier.Axis.Y).getPollData(),
+							ry = gamepad.getComponent(Identifier.Axis.RY).getPollData();
+					ly = -scaleBetween(ly, -127, 127, -0.68f, 0.84f);
+					ry = -scaleBetween(ry, -127, 127, -0.75f, 0.75f);
+					/*ly = -scaleBetween(ly, -127, 127, -1f, 1f);
+					ry = -scaleBetween(ry, -127, 127, -1f, 1f);*/
+					byte[] throttles = tr.pack.setThrottles((byte)ly, (byte)ry);
+					
+					
+					boolean leftBrake = gamepad.getComponent(Identifier.Button._4).getPollData() > 0?true:false,
+							rightBrake = gamepad.getComponent(Identifier.Button._5).getPollData() > 0?true:false,
+							fire = gamepad.getComponent(Identifier.Button._7).getPollData() > 0?true:false;
+					if (fire) {
+						if (!firePressedBefore) {
+							firePressedBefore = true;
+							tr.asyncFire();
+						}
+					} else {
+						firePressedBefore = false;
+					}
+					tr.pack.setLeftBrake(leftBrake);
+					tr.pack.setRightBrake(rightBrake);
+					
+					setLeftBrake(leftBrake);
+					setRightBrake(rightBrake);
+					
+					
+					setSliders(throttles);
+				}
+			}
+			
+		}, 0, GAMEPAD_INTERVAL);
 		
 		new Thread(new Runnable() {
 
@@ -115,6 +177,7 @@ public class TankRemoteWindow{
 						e.printStackTrace();
 					}
 				}
+				tr.close();
 			}
 		}).start();
 	}
@@ -130,7 +193,16 @@ public class TankRemoteWindow{
 			e1.printStackTrace();
 			System.exit(1);
 		}
+		
+		try {
+			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+		} catch (ClassNotFoundException | InstantiationException | IllegalAccessException
+				| UnsupportedLookAndFeelException e1) {
+			e1.printStackTrace();
+		}
+		
 		frame = new JFrame();
+		
 		frame.setBounds(100, 100, 450, 300);
 		frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
@@ -173,18 +245,55 @@ public class TankRemoteWindow{
 		JMenuItem mntmAbout = new JMenuItem("About");
 		mnHelp.add(mntmAbout);
 		frame.getContentPane().setLayout(new BorderLayout(0, 0));
+		
+		JPanel bottomPanel = new JPanel();
+		frame.getContentPane().add(bottomPanel, BorderLayout.SOUTH);
+				bottomPanel.setLayout(new BorderLayout(0, 0));
+				
+				JPanel connectionPanel = new JPanel();
+				FlowLayout flowLayout = (FlowLayout) connectionPanel.getLayout();
+				flowLayout.setAlignment(FlowLayout.LEFT);
+				bottomPanel.add(connectionPanel, BorderLayout.CENTER);
+				
+				JButton connectButton = new JButton("Connect");
+				connectButton.addActionListener(new ActionListener() {
 
-		JLabel lblStatus = new JLabel("Sending at " + address);
-		frame.getContentPane().add(lblStatus, BorderLayout.SOUTH);
+					@Override
+					public void actionPerformed(ActionEvent arg0) {
+						//TODO: Send Connection Packet
+						tr.connect();
+						transmitting = true;
+						chckbxTransmitting.setSelected(true);
+					}
+					
+				});
+				connectionPanel.add(connectButton);
+				
+				JButton exitButton = new JButton("Exit");
+				exitButton.addActionListener(new ActionListener() {
 
-		JPanel panel = new JPanel();
-		frame.getContentPane().add(panel, BorderLayout.WEST);
-		GridBagLayout gbl_panel = new GridBagLayout();
-		gbl_panel.columnWidths = new int[] { 30, 0, 0, 0, 0 };
-		gbl_panel.rowHeights = new int[] { 0, 75, 75, 0, 0, 0 };
-		gbl_panel.columnWeights = new double[] { 0.0, 0.0, 0.0, 1.0, Double.MIN_VALUE };
-		gbl_panel.rowWeights = new double[] { 0.0, 1.0, 0.0, 0.0, 0.0, Double.MIN_VALUE };
-		panel.setLayout(gbl_panel);
+					@Override
+					public void actionPerformed(ActionEvent arg0) {
+						//TODO: Send Connection Packet
+						if (tr.connect()) {
+							tr.exit();
+						}
+					}
+					
+				});
+				connectionPanel.add(exitButton);
+		
+				JLabel lblStatus = new JLabel("Sending at " + address);
+				bottomPanel.add(lblStatus, BorderLayout.SOUTH);
+
+		JPanel mainPanel = new JPanel();
+		frame.getContentPane().add(mainPanel, BorderLayout.WEST);
+		GridBagLayout gbl_mainPanel = new GridBagLayout();
+		gbl_mainPanel.columnWidths = new int[] { 30, 0, 0, 0, 0 };
+		gbl_mainPanel.rowHeights = new int[] { 0, 75, 75, 0, 0, 0 };
+		gbl_mainPanel.columnWeights = new double[] { 0.0, 0.0, 0.0, 1.0, Double.MIN_VALUE };
+		gbl_mainPanel.rowWeights = new double[] { 0.0, 1.0, 0.0, 0.0, 0.0, Double.MIN_VALUE };
+		mainPanel.setLayout(gbl_mainPanel);
 
 		JLabel lblThrottle = new JLabel("Throttle");
 		lblThrottle.setHorizontalAlignment(SwingConstants.CENTER);
@@ -193,9 +302,17 @@ public class TankRemoteWindow{
 		gbc_lblThrottle.gridwidth = 2;
 		gbc_lblThrottle.gridx = 1;
 		gbc_lblThrottle.gridy = 0;
-		panel.add(lblThrottle, gbc_lblThrottle);
+		mainPanel.add(lblThrottle, gbc_lblThrottle);
 
 		byte[] throttles = tr.pack.getThrottles();
+		
+		URL url = this.getClass().getResource("assets/throttle_slider.gif");
+
+		UIDefaults defaults = UIManager.getDefaults();
+		
+		defaults.put("Slider.horizontalThumbIcon", new ImageIcon(url));
+		
+		
 
 		slider_throttleLeft = new JSlider();
 		slider_throttleLeft.setMinimum(-127);
@@ -211,7 +328,7 @@ public class TankRemoteWindow{
 		gbc_slider_throttleLeft.gridheight = 2;
 		gbc_slider_throttleLeft.gridx = 1;
 		gbc_slider_throttleLeft.gridy = 1;
-		panel.add(slider_throttleLeft, gbc_slider_throttleLeft);
+		mainPanel.add(slider_throttleLeft, gbc_slider_throttleLeft);
 
 		slider_throttleRight = new JSlider();
 		slider_throttleRight.setMinimum(-127);
@@ -227,7 +344,7 @@ public class TankRemoteWindow{
 		gbc_slider_throttleRight.gridheight = 2;
 		gbc_slider_throttleRight.gridx = 2;
 		gbc_slider_throttleRight.gridy = 1;
-		panel.add(slider_throttleRight, gbc_slider_throttleRight);
+		mainPanel.add(slider_throttleRight, gbc_slider_throttleRight);
 
 		JPanel panel_1 = new JPanel();
 		GridBagConstraints gbc_panel_1 = new GridBagConstraints();
@@ -235,9 +352,9 @@ public class TankRemoteWindow{
 		gbc_panel_1.fill = GridBagConstraints.BOTH;
 		gbc_panel_1.gridx = 3;
 		gbc_panel_1.gridy = 1;
-		panel.add(panel_1, gbc_panel_1);
+		mainPanel.add(panel_1, gbc_panel_1);
 
-		JCheckBox chckbxTransmitting = new JCheckBox("Transmitting");
+		chckbxTransmitting = new JCheckBox("Transmitting");
 		chckbxTransmitting.addChangeListener(new ChangeListener() {
 			public void stateChanged(ChangeEvent arg0) {
 				transmitting = chckbxTransmitting.isSelected();
@@ -245,17 +362,17 @@ public class TankRemoteWindow{
 		});
 		chckbxTransmitting.setSelected(false);
 
-		JCheckBox checkBox_lights = new JCheckBox("Lights");
-		checkBox_lights.addChangeListener(new ChangeListener() {
+		checkBoxLeftBrake = new JCheckBox("Left Brake");
+		checkBoxLeftBrake.addChangeListener(new ChangeListener() {
 			public void stateChanged(ChangeEvent e) {
-				tr.pack.setLights(checkBox_lights.isSelected());
+				tr.pack.setLeftBrake(checkBoxLeftBrake.isSelected());
 			}
 		});
 		
-		JCheckBox chckbxCamera = new JCheckBox("Camera");
-		chckbxCamera.addChangeListener(new ChangeListener() {
+		checkBoxRightBrake = new JCheckBox("Right Brake");
+		checkBoxRightBrake.addChangeListener(new ChangeListener() {
 			public void stateChanged(ChangeEvent e) {
-				tr.pack.setCamera(chckbxCamera.isSelected());
+				tr.pack.setRightBrake(checkBoxRightBrake.isSelected());
 			}
 		});
 		
@@ -265,8 +382,8 @@ public class TankRemoteWindow{
 				.addGroup(gl_panel_1.createSequentialGroup()
 					.addGroup(gl_panel_1.createParallelGroup(Alignment.LEADING)
 						.addComponent(chckbxTransmitting)
-						.addComponent(checkBox_lights)
-						.addComponent(chckbxCamera))
+						.addComponent(checkBoxLeftBrake)
+						.addComponent(checkBoxRightBrake))
 					.addGap(62))
 		);
 		gl_panel_1.setVerticalGroup(
@@ -274,9 +391,9 @@ public class TankRemoteWindow{
 				.addGroup(gl_panel_1.createSequentialGroup()
 					.addComponent(chckbxTransmitting)
 					.addPreferredGap(ComponentPlacement.RELATED)
-					.addComponent(checkBox_lights)
+					.addComponent(checkBoxLeftBrake)
 					.addPreferredGap(ComponentPlacement.RELATED)
-					.addComponent(chckbxCamera)
+					.addComponent(checkBoxRightBrake)
 					.addContainerGap(9, Short.MAX_VALUE))
 		);
 		panel_1.setLayout(gl_panel_1);
@@ -286,14 +403,14 @@ public class TankRemoteWindow{
 		gbc_label_throttleLeft.insets = new Insets(0, 0, 5, 5);
 		gbc_label_throttleLeft.gridx = 1;
 		gbc_label_throttleLeft.gridy = 3;
-		panel.add(label_throttleLeft, gbc_label_throttleLeft);
+		mainPanel.add(label_throttleLeft, gbc_label_throttleLeft);
 
 		label_throttleRight = new JLabel("0%");
 		GridBagConstraints gbc_label_throttleRight = new GridBagConstraints();
 		gbc_label_throttleRight.insets = new Insets(0, 0, 5, 5);
 		gbc_label_throttleRight.gridx = 2;
 		gbc_label_throttleRight.gridy = 3;
-		panel.add(label_throttleRight, gbc_label_throttleRight);
+		mainPanel.add(label_throttleRight, gbc_label_throttleRight);
 		
 
 		setSliders(throttles);
@@ -303,7 +420,7 @@ public class TankRemoteWindow{
 		gbc_lblNewLabel.insets = new Insets(0, 0, 5, 0);
 		gbc_lblNewLabel.gridx = 3;
 		gbc_lblNewLabel.gridy = 0;
-		panel.add(lblNewLabel, gbc_lblNewLabel);
+		mainPanel.add(lblNewLabel, gbc_lblNewLabel);
 
 		lblThrottle.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("UP"), "LR_UP");
 		lblThrottle.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("DOWN"), "LR_DOWN");
@@ -316,15 +433,17 @@ public class TankRemoteWindow{
 
 			@Override
 			public void actionPerformed(ActionEvent arg0) {
-				byte[] throttles = tr.pack.getThrottles();
-				
-				power = Math.min(127, power + 1);
-				throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
-				
-				setSliders(throttles);
-
+				if(!controllerConnected) {
+					byte[] throttles = tr.pack.getThrottles();
+					
+					power = Math.min(127, power + 3);
+					throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
+					
+					setSliders(throttles);
+	
+					
+				}
 				lastInput = System.currentTimeMillis();
-				
 			}
 			
 		});
@@ -333,15 +452,17 @@ public class TankRemoteWindow{
 
 			@Override
 			public void actionPerformed(ActionEvent arg0) {
-				byte[] throttles = tr.pack.getThrottles();
-
-				power = Math.max(-127, power - 1);
-				throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
-				
-				setSliders(throttles);
-
+				if(!controllerConnected) {
+					byte[] throttles = tr.pack.getThrottles();
+	
+					power = Math.max(-127, power - 3);
+					throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
+					
+					setSliders(throttles);
+	
+					
+				}
 				lastInput = System.currentTimeMillis();
-				
 			}
 			
 		});
@@ -350,13 +471,14 @@ public class TankRemoteWindow{
 
 			@Override
 			public void actionPerformed(ActionEvent arg0) {
-				byte[] throttles = tr.pack.getThrottles();
-				dir = FORWARD;
-				power = 0;
-				throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
-				
-				setSliders(throttles);
-
+				if(!controllerConnected) {
+					byte[] throttles = tr.pack.getThrottles();
+					dir = FORWARD;
+					power = 0;
+					throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
+					
+					setSliders(throttles);
+				}
 				lastInput = System.currentTimeMillis();
 			}
 			
@@ -366,14 +488,15 @@ public class TankRemoteWindow{
 
 			@Override
 			public void actionPerformed(ActionEvent arg0) {
-				byte[] throttles = tr.pack.getThrottles();
-				dir ++;
-				dir %= 200;
-				
-				throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
-				
-				setSliders(throttles);
-
+				if(!controllerConnected) {
+					byte[] throttles = tr.pack.getThrottles();
+					dir ++;
+					dir %= 200;
+					
+					throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
+					
+					setSliders(throttles);
+				}
 				lastInput = System.currentTimeMillis();
 			}
 			
@@ -383,16 +506,17 @@ public class TankRemoteWindow{
 
 			@Override
 			public void actionPerformed(ActionEvent arg0) {
-				byte[] throttles = tr.pack.getThrottles();
-				dir --;
-				dir %= 200;
-				if (dir < 0) {
-					dir += 200;
+				if(!controllerConnected) {
+					byte[] throttles = tr.pack.getThrottles();
+					dir --;
+					dir %= 200;
+					if (dir < 0) {
+						dir += 200;
+					}
+					throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
+					
+					setSliders(throttles);
 				}
-				throttles = tr.pack.setThrottles(TankRemote.calcThrottle(dir, power));
-				
-				setSliders(throttles);
-
 				lastInput = System.currentTimeMillis();
 			}
 			
@@ -400,7 +524,24 @@ public class TankRemoteWindow{
 		
 
 	}
+	private void controllerCheck() {
+		Controller[] controllers = ControllerEnvironment.getDefaultEnvironment().getControllers();
+		final ArrayList<Controller> gamepads = new ArrayList<Controller>();
 
+		for (Controller controller : controllers) {
+
+			if (controller.getType() == Controller.Type.GAMEPAD || controller.getType() == Controller.Type.STICK) {
+
+				gamepads.add(controller);
+
+			}
+		}
+		if (gamepads.isEmpty()) {
+			return;
+		}
+		controllerConnected = true;
+		gamepad = gamepads.get(0);
+	}
 	private void decay() {
 		if ((System.currentTimeMillis() < lastInput + DECAY_WAIT) || (dir == FORWARD && power == 0)) {
 			return;
@@ -444,5 +585,14 @@ public class TankRemoteWindow{
 		
 		label_throttleLeft.setText((int) (throttles[0] / 1.27) + "%");
 		label_throttleRight.setText((int) (throttles[1] / 1.27) + "%");
+	}
+	private void setLeftBrake(final boolean leftBrake) {
+		checkBoxLeftBrake.setSelected(leftBrake);
+	}
+	private void setRightBrake(final boolean rightBrake) {
+		checkBoxRightBrake.setSelected(rightBrake);
+	}
+	public static float scaleBetween(float unscaledNum, float minAllowed, float maxAllowed, float min, float max) {
+		  return (maxAllowed - minAllowed) * (unscaledNum - min) / (max - min) + minAllowed;
 	}
 }

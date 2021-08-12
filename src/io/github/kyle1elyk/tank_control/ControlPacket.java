@@ -5,19 +5,24 @@ import com.google.gson.annotations.Expose;
 public class ControlPacket {
 	@Expose(serialize = false, deserialize = false)
 	private static byte CONTROL_BYTE = 0x3D;
+	
+	private static String PROT_CONNECT = "connect",
+			PROT_DISCONNECT = "disconnect",
+			PROT_EXIT = "exit",
+			PROT_FIRE = "fire";
 
 	@Expose(serialize = true)
 	private byte throttleLeft, throttleRight;
 
 	@Expose(serialize = true)
-	private boolean lightEnable, cameraEnable;
+	private boolean leftBrake, rightBrake;
 
 	public ControlPacket() {
 		this.throttleLeft = 0;
 		this.throttleRight = 0;
 
-		this.lightEnable = false;
-		this.cameraEnable = false;
+		this.leftBrake = false;
+		this.rightBrake = false;
 	}
 	public byte[] setThrottles(final byte[] throttles) {
 		return this.setThrottles(throttles[0], throttles[1]);
@@ -30,27 +35,44 @@ public class ControlPacket {
 	public byte[] getThrottles() {
 		return new byte[] {this.throttleLeft, this.throttleRight};
 	}
-	public boolean getLights() {
-		return this.lightEnable;
+	public boolean getLeftBrake() {
+		return this.leftBrake;
 	}
-	public void toggleLights() {
-		this.lightEnable = !this.lightEnable;
+	public boolean getRightBrake() {
+		return this.rightBrake;
 	}
 
-	public void setLights(final boolean lights) {
-		this.lightEnable = lights;
+	public void setLeftBrake(final boolean leftBrake) {
+		this.leftBrake = leftBrake;
 	}
-	public void setCamera(final boolean camera) {
-		this.cameraEnable = camera;
+	public void setRightBrake(final boolean rightBrake) {
+		this.rightBrake = rightBrake;
 	}
 	public byte[] getBytes() {
 		byte[] returnData = new byte[5];
 		returnData[0] = CONTROL_BYTE;
 		returnData[1] = throttleLeft;
 		returnData[2] = throttleRight;
-		returnData[3] = (byte) (lightEnable ? 1 : 0);
-		returnData[4] = (byte) (cameraEnable ? 1 : 0);
+		returnData[3] = (byte) (leftBrake ? 1 : 0);
+		returnData[4] = (byte) (rightBrake ? 1 : 0);
 		return returnData;
 	}
-
+	
+	private String commandBuilder(final String command) {
+		return  String.format("{\"command\":\"%s\"}", command);
+	}
+	public String getConnectionMessage() {
+		return commandBuilder(PROT_CONNECT);
+	}
+	public String getDisconnectionMessage() {
+		return commandBuilder(PROT_DISCONNECT);
+	}
+	public String getExitMessage() {
+		return commandBuilder(PROT_EXIT);
+	}
+	public String getFireMessage() {
+		return commandBuilder(PROT_FIRE);
+	}
+	
+	
 }
